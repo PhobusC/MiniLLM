@@ -168,3 +168,49 @@ v1 generation can re-run the full sequence each step (simpler). KV-cache is a la
 - [x] Train loop + checkpoints
 - [x] Generate from prompt
 - [x] Overfit test, then real data run
+
+---
+
+# v2 Plan
+
+Goal: learn from larger, richer text (Project Gutenberg), use a modern position encoding (RoPE), double the size, generate faster, add a simple chat UI, and make internals inspectable. Changes are staged so the model changes as little as possible at a time: one architecture change is measured on the old data before the dataset and size jump. Each stage gets its own tests and commit.
+
+## Decisions
+
+| Choice | v1 | v2 | Why |
+| --- | --- | --- | --- |
+| Data | TinyStories (2.2GB) | English Project Gutenberg (~5GB of books, `sedthh/gutenberg_english`) | Larger and richer prose; public domain |
+| Validation split | Separate file | ~0.5% of books, split by whole book | No book appears in both train and validation |
+| Position encoding | Learned absolute | RoPE (rotary) | Relative positions; no position table |
+| Attention kernel | Manual softmax(QKᵀ)V | `F.scaled_dot_product_attention` | Fused and faster; manual path kept for inspection |
+| Size | 6.85M params | ~13.6M (≈2×) | 12 layers (from 6), 16k vocab (from 8k), same width 256 / 8 heads / d_ff 1024 |
+| Context | 256 | 512 | Longer passages from books |
+| Generation | Full recompute | KV cache + left-padded batch generation + streaming | Faster sampling; several prompts at once |
+| UI | CLI only | Local chat page (FastAPI + one HTML page) | Simple chat box with streamed replies |
+| Inspection | None | Forward-hook activation probe, gradient norms, `probe.csv` | See activation, entropy and gradient health per layer |
+
+## Stages
+
+1. **SDPA attention.** Switch to the fused kernel with no behavior change; v1 greedy output stays identical.
+2. **Activation hooks.** `minillm/probe.py` (`ActivationProbe`, `grad_norms`), `inspect_model.py`, `train.py --probe-interval`. Save a v1 baseline.
+3. **KV cache and batch generation.** `minillm/generation.py` (`generate`, `stream`), left padding with an attention mask, position ids from the mask, per-row `<eos>`. `generate.py` accepts repeated `--prompt` and `--no-cache`.
+4. **RoPE.** `minillm/model/rope.py` and `Config.pos_encoding` (v1 checkpoints load as `"learned"`). Controlled comparison: 5k steps on TinyStories, learned vs RoPE, all else equal.
+5. **Gutenberg pipeline.** `minillm/gutenberg.py` and `scripts/download_gutenberg.py`: paragraph unwrapping, short/noisy-book filters, book-level split. Separate 16k tokenizer at `data/processed/gutenberg_tokenizer.json`.
+6. **Scale and train v2.** Model-size flags on `train.py`, optional bf16 autocast (`--amp`). Smoke-test throughput, then the full run to `checkpoints/v2/` with probes on. Compare with v1.
+7. **Chat page.** `serve.py` (FastAPI, streaming `POST /generate`, localhost only) and `web/index.html` (single chat column, no extra features). v2 is a base model, so replies continue the message rather than answer it.
+
+## v2 checklist
+
+- [x] Stage 1: SDPA attention
+- [x] Stage 2: Activation hooks and `inspect_model.py`
+- [x] Stage 3: KV cache and batch generation
+- [x] Stage 4: RoPE code (comparison run in progress)
+- [x] Stage 5: Gutenberg pipeline code (download in progress)
+- [ ] Stage 6: Scale to ~13.6M and train v2
+- [ ] Stage 7: Local chat page
+
+## Later (v3 ideas)
+
+- Instruction tuning, so the chat page answers questions instead of continuing text
+- RMSNorm and SwiGLU; top-p sampling and repetition penalty
+- Perplexity comparisons on a fixed prompt set across checkpoints
