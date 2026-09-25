@@ -12,6 +12,7 @@ into data/processed/<name>.bin. Logs go to <out>/log.csv, checkpoints to <out>/c
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import dataclasses
 import math
@@ -26,6 +27,7 @@ from torch.utils.data import DataLoader
 from minillm.config import Config
 from minillm.dataset import IGNORE_INDEX, TokenBinDataset, list_text_files, load_or_tokenize, make_dataloader
 from minillm.model import MiniGPT
+from minillm.probe import STAT_KEYS, ActivationProbe, grad_norms
 from minillm.tokenizer import train_or_load
 from minillm.utils import get_device, load_checkpoint, save_checkpoint, set_seed
 
@@ -49,6 +51,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--eval-interval", type=int, default=500)
     p.add_argument("--eval-batches", type=int, default=50)
     p.add_argument("--save-interval", type=int, default=1000)
+    p.add_argument("--probe-interval", type=int, default=0, help="log activation/grad stats to probe.csv every N steps (0=off)")
     p.add_argument("--resume", action="store_true", help="continue from <out>/ckpt.pt")
     p.add_argument("--device", type=str, default=None, help="override device (cpu, mps, cuda)")
     return p.parse_args(argv)
@@ -79,6 +82,15 @@ def compute_loss(model: MiniGPT, batch: dict[str, torch.Tensor], device: torch.d
     y = batch["labels"].to(device)
     logits = model(x)
     return F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=IGNORE_INDEX)
+
+
+def write_probe_rows(
+    writer: csv.writer, step: int, stats: dict[str, dict[str, float]], grads: dict[str, float]
+) -> None:
+    for layer, row in stats.items():
+        writer.writerow([step, layer, *(f"{row[k]:.6g}" if k in row else "" for k in STAT_KEYS), ""])
+    for group, norm in grads.items():
+        writer.writerow([step, f"grad/{group}", *([""] * len(STAT_KEYS)), f"{norm:.6g}"])
 
 
 @torch.no_grad()
@@ -157,6 +169,16 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
     if new_log:
         log.writerow(["step", "lr", "train_loss", "val_loss", "tokens_per_sec"])
 
+    probe_file = None
+    probe_log = None
+    if args.probe_interval > 0:
+        probe_path = args.out / "probe.csv"
+        new_probe = not (args.resume and probe_path.is_file())
+        probe_file = probe_path.open("w" if new_probe else "a", newline="")
+        probe_log = csv.writer(probe_file)
+        if new_probe:
+            probe_log.writerow(["step", "layer", *STAT_KEYS, "grad_norm"])
+
     batches = infinite(train_loader)
     model.train()
     running, count = 0.0, 0
@@ -170,9 +192,14 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
             for group in optimizer.param_groups:
                 group["lr"] = lr
 
-            loss = compute_loss(model, next(batches), device)
+            probing = args.probe_interval > 0 and (step + 1) % args.probe_interval == 0
+            with ActivationProbe(model) if probing else contextlib.nullcontext() as probe:
+                loss = compute_loss(model, next(batches), device)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            if probing:
+                write_probe_rows(probe_log, step + 1, probe.stats, grad_norms(model))
+                probe_file.flush()
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
             optimizer.step()
             running += loss.item()
@@ -197,6 +224,8 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
                 save(done)
     finally:
         log_file.close()
+        if probe_file is not None:
+            probe_file.close()
 
     print(f"saved checkpoint to {ckpt_path}; loss curve in {log_path}")
     return last

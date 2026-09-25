@@ -22,6 +22,7 @@ class CausalSelfAttention(nn.Module):
         self.attn_drop = nn.Dropout(dropout)
         self.resid_drop = nn.Dropout(dropout)
         self.use_manual = False
+        self.last_weights: torch.Tensor | None = None
 
     def _manual_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Explicit softmax(QKᵀ/√d)V; slower than SDPA but exposes the attention weights."""
@@ -43,6 +44,8 @@ class CausalSelfAttention(nn.Module):
         weights = None
         if return_weights or self.use_manual:
             out, weights = self._manual_attention(q, k, v)
+            if self.use_manual:
+                self.last_weights = weights.detach()
         else:
             dropout_p = self.dropout if self.training else 0.0
             out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p, is_causal=True)
