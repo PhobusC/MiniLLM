@@ -161,10 +161,10 @@ v1 generation can re-run the full sequence each step (simpler). KV-cache is a la
 
 ## Implementation order (checklist)
 
-- [ ] Skeleton + `config.py` + dependencies
-- [ ] Tokenizer train/load + encode/decode
-- [ ] Dataset packing and next-token labels
-- [ ] Embeddings, causal attention, block, full decoder
-- [ ] Train loop + checkpoints
-- [ ] Generate from prompt
-- [ ] Overfit test, then real data run
+- [x] Skeleton + `config.py` + dependencies
+- [x] Tokenizer train/load + encode/decode
+- [x] Dataset packing and next-token labels
+- [x] Embeddings, causal attention, block, full decoder
+- [x] Train loop + checkpoints
+- [x] Generate from prompt
+- [x] Overfit test, then real data run
