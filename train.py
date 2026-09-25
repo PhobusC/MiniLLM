@@ -48,6 +48,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--warmup-steps", type=int, default=d.warmup_steps)
     p.add_argument("--dropout", type=float, default=d.dropout)
     p.add_argument("--pos-encoding", choices=["rope", "learned"], default=d.pos_encoding)
+    p.add_argument("--n-layers", type=int, default=d.n_layers)
+    p.add_argument("--d-model", type=int, default=d.d_model)
+    p.add_argument("--n-heads", type=int, default=d.n_heads)
+    p.add_argument("--d-ff", type=int, default=d.d_ff)
+    p.add_argument("--amp", action="store_true", help="bf16 autocast for forward passes (CUDA/MPS)")
     p.add_argument("--log-interval", type=int, default=50)
     p.add_argument("--eval-interval", type=int, default=500)
     p.add_argument("--eval-batches", type=int, default=50)
@@ -78,11 +83,21 @@ def infinite(loader: DataLoader) -> Iterator[dict[str, torch.Tensor]]:
         yield from loader
 
 
-def compute_loss(model: MiniGPT, batch: dict[str, torch.Tensor], device: torch.device) -> torch.Tensor:
+def autocast(device: torch.device, enabled: bool) -> contextlib.AbstractContextManager:
+    """bf16 autocast: matmuls run in bfloat16, numerically sensitive ops (softmax, loss) stay fp32."""
+    if not enabled:
+        return contextlib.nullcontext()
+    return torch.autocast(device_type=device.type, dtype=torch.bfloat16)
+
+
+def compute_loss(
+    model: MiniGPT, batch: dict[str, torch.Tensor], device: torch.device, amp: bool = False
+) -> torch.Tensor:
     x = batch["input_ids"].to(device)
     y = batch["labels"].to(device)
-    logits = model(x)
-    return F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=IGNORE_INDEX)
+    with autocast(device, amp):
+        logits = model(x)
+    return F.cross_entropy(logits.float().view(-1, logits.size(-1)), y.view(-1), ignore_index=IGNORE_INDEX)
 
 
 def write_probe_rows(
@@ -95,13 +110,13 @@ def write_probe_rows(
 
 
 @torch.no_grad()
-def evaluate(model: MiniGPT, loader: DataLoader, device: torch.device, max_batches: int) -> float:
+def evaluate(model: MiniGPT, loader: DataLoader, device: torch.device, max_batches: int, amp: bool = False) -> float:
     model.eval()
     losses = []
     for i, batch in enumerate(loader):
         if i >= max_batches:
             break
-        losses.append(compute_loss(model, batch, device).item())
+        losses.append(compute_loss(model, batch, device, amp).item())
     model.train()
     return sum(losses) / len(losses)
 
@@ -126,6 +141,10 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
             warmup_steps=args.warmup_steps,
             dropout=args.dropout,
             pos_encoding=args.pos_encoding,
+            n_layers=args.n_layers,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            d_ff=args.d_ff,
             tokenizer_path=args.tokenizer,
             data_processed_dir=args.processed_dir,
         )
@@ -196,7 +215,7 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
 
             probing = args.probe_interval > 0 and (step + 1) % args.probe_interval == 0
             with ActivationProbe(model) if probing else contextlib.nullcontext() as probe:
-                loss = compute_loss(model, next(batches), device)
+                loss = compute_loss(model, next(batches), device, args.amp)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             if probing:
@@ -215,9 +234,9 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
                 last["train_loss"] = running / count
                 val_loss = float("nan")
                 if val_loader is not None and (done % args.eval_interval == 0 or is_last):
-                    val_loss = evaluate(model, val_loader, device, args.eval_batches)
+                    val_loss = evaluate(model, val_loader, device, args.eval_batches, args.amp)
                     last["val_loss"] = val_loss
-                print(f"step {done:>6} | lr {lr:.2e} | loss {last['train_loss']:.4f} | val {val_loss:.4f} | {tps:,.0f} tok/s")
+                print(f"step {done:>6} | lr {lr:.2e} | loss {last['train_loss']:.4f} | val {val_loss:.4f} (ppl {math.exp(val_loss):.1f}) | {tps:,.0f} tok/s")
                 log.writerow([done, f"{lr:.6e}", f"{last['train_loss']:.4f}", f"{val_loss:.4f}", f"{tps:.0f}"])
                 log_file.flush()
                 running, count = 0.0, 0
