@@ -38,6 +38,12 @@ class MiniTokenizer:
             return [self.bos_id] + ids + [self.eos_id]
         return ids
 
+    def encode_batch(self, texts: list[str], add_special_tokens: bool = False) -> list[list[int]]:
+        encoded = [e.ids for e in self._tok.encode_batch(texts)]
+        if add_special_tokens:
+            return [[self.bos_id] + ids + [self.eos_id] for ids in encoded]
+        return encoded
+
     def decode(self, ids: list[int], skip_special_tokens: bool = True) -> str:
         if skip_special_tokens:
             special = {self.pad_id, self.bos_id, self.eos_id, self.unk_id}

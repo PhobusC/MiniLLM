@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 from minillm.config import Config
 from minillm.tokenizer import MiniTokenizer, train_or_load
@@ -86,7 +89,7 @@ class TextDataset(Dataset):
 
 
 def make_dataloader(
-    dataset: TextDataset,
+    dataset: Dataset,
     batch_size: int,
     shuffle: bool = True,
     num_workers: int = 0,
@@ -98,6 +101,87 @@ def make_dataloader(
         num_workers=num_workers,
         drop_last=False,
     )
+
+
+DOC_SEPARATOR = "<|endoftext|>"
+
+
+def _iter_documents(path: Path, docs_per_batch: int) -> Iterator[list[str]]:
+    """Yield batches of documents split on DOC_SEPARATOR, streaming the file line by line."""
+    batch: list[str] = []
+    lines: list[str] = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            if line.strip() == DOC_SEPARATOR:
+                doc = "".join(lines).strip()
+                lines = []
+                if doc:
+                    batch.append(doc)
+                if len(batch) >= docs_per_batch:
+                    yield batch
+                    batch = []
+            else:
+                lines.append(line)
+    doc = "".join(lines).strip()
+    if doc:
+        batch.append(doc)
+    if batch:
+        yield batch
+
+
+def tokenize_to_bin(
+    tokenizer: MiniTokenizer,
+    files: list[Path],
+    out_path: Path | str,
+    docs_per_batch: int = 10_000,
+) -> Path:
+    """Encode documents (each wrapped in <bos>/<eos>) into a flat uint16 token file."""
+    if tokenizer.vocab_size > np.iinfo(np.uint16).max:
+        raise ValueError("vocab too large for uint16 token storage")
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_path.with_suffix(".tmp")
+    n_tokens = 0
+    with tmp_path.open("wb") as out:
+        for path in files:
+            for docs in tqdm(_iter_documents(path, docs_per_batch), desc=f"tokenize {path.name}", unit="batch"):
+                ids = np.fromiter(
+                    (i for doc in tokenizer.encode_batch(docs, add_special_tokens=True) for i in doc),
+                    dtype=np.uint16,
+                )
+                ids.tofile(out)
+                n_tokens += ids.size
+    tmp_path.replace(out_path)
+    print(f"wrote {n_tokens:,} tokens to {out_path}")
+    return out_path
+
+
+class TokenBinDataset(Dataset):
+    """Non-overlapping windows over a memory-mapped uint16 token file."""
+
+    def __init__(self, bin_path: Path | str, max_seq_len: int) -> None:
+        self.tokens = np.memmap(bin_path, dtype=np.uint16, mode="r")
+        self.window = max_seq_len + 1
+        self.n_windows = len(self.tokens) // self.window
+        if self.n_windows == 0:
+            raise ValueError(f"{bin_path} has fewer than {self.window} tokens")
+
+    def __len__(self) -> int:
+        return self.n_windows
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        start = index * self.window
+        chunk = torch.from_numpy(self.tokens[start : start + self.window].astype(np.int64))
+        return {"input_ids": chunk[:-1], "labels": chunk[1:]}
+
+
+def load_or_tokenize(tokenizer: MiniTokenizer, text_path: Path, processed_dir: Path) -> Path:
+    """Return the path of the cached .bin for a text file or directory, tokenizing on first use."""
+    files = [text_path] if text_path.is_file() else list_text_files(text_path)
+    bin_path = Path(processed_dir) / f"{text_path.stem}.bin"
+    if not bin_path.is_file():
+        tokenize_to_bin(tokenizer, files, bin_path)
+    return bin_path
 
 
 def build_dataset(config: Config, tokenizer: MiniTokenizer | None = None) -> TextDataset:
