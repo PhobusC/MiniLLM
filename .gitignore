@@ -13,3 +13,6 @@ checkpoints/*
 *.pt
 *.pth
 .DS_Store
+
+# Personal notes
+learning.md
