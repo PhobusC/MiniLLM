@@ -23,10 +23,12 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, max_seq_len: int, dropout: float) -> None:
+    def __init__(
+        self, d_model: int, n_heads: int, d_ff: int, max_seq_len: int, dropout: float, rope: bool = False
+    ) -> None:
         super().__init__()
         self.ln1 = nn.LayerNorm(d_model)
-        self.attn = CausalSelfAttention(d_model, n_heads, max_seq_len, dropout)
+        self.attn = CausalSelfAttention(d_model, n_heads, max_seq_len, dropout, rope=rope)
         self.ln2 = nn.LayerNorm(d_model)
         self.ff = FeedForward(d_model, d_ff, dropout)
 
@@ -36,8 +38,10 @@ class TransformerBlock(nn.Module):
         attn_mask: torch.Tensor | None = None,
         past_kv: KVCache | None = None,
         use_cache: bool = False,
+        position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, KVCache]:
-        attn_out = self.attn(self.ln1(x), attn_mask=attn_mask, past_kv=past_kv, use_cache=use_cache)
+        attn_out = self.attn(self.ln1(x), attn_mask=attn_mask, past_kv=past_kv, use_cache=use_cache,
+                             position_ids=position_ids)
         present = None
         if use_cache:
             attn_out, present = attn_out

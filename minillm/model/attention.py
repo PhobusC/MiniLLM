@@ -8,16 +8,19 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from minillm.model.rope import RotaryEmbedding
+
 KVCache = tuple[torch.Tensor, torch.Tensor]
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, max_seq_len: int, dropout: float) -> None:
+    def __init__(self, d_model: int, n_heads: int, max_seq_len: int, dropout: float, rope: bool = False) -> None:
         super().__init__()
         if d_model % n_heads != 0:
             raise ValueError("d_model must be divisible by n_heads")
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
+        self.rotary = RotaryEmbedding(self.head_dim, max_seq_len) if rope else None
         self.dropout = dropout
         self.qkv = nn.Linear(d_model, 3 * d_model)
         self.proj = nn.Linear(d_model, d_model)
@@ -44,10 +47,12 @@ class CausalSelfAttention(nn.Module):
         attn_mask: torch.Tensor | None = None,
         past_kv: KVCache | None = None,
         use_cache: bool = False,
+        position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, KVCache]:
         """(B, T, C) -> (B, T, C).
 
         attn_mask: bool (B, 1, T, T_total), True = may attend. None means plain causal (no cache).
+        position_ids: (B or 1, T) absolute positions, used by RoPE; defaults to 0..T-1.
         Returns (out, weights) if return_weights, (out, (k, v)) if use_cache, else out.
         """
         B, T, C = x.shape
@@ -55,6 +60,10 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
         k = k.view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
         v = v.view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
+        if self.rotary is not None:
+            if position_ids is None:
+                position_ids = torch.arange(T, device=x.device)[None]
+            q, k = self.rotary(q, position_ids), self.rotary(k, position_ids)
         if past_kv is not None:
             k = torch.cat([past_kv[0], k], dim=2)
             v = torch.cat([past_kv[1], v], dim=2)

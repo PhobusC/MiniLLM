@@ -47,6 +47,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--max-steps", type=int, default=d.max_steps)
     p.add_argument("--warmup-steps", type=int, default=d.warmup_steps)
     p.add_argument("--dropout", type=float, default=d.dropout)
+    p.add_argument("--pos-encoding", choices=["rope", "learned"], default=d.pos_encoding)
     p.add_argument("--log-interval", type=int, default=50)
     p.add_argument("--eval-interval", type=int, default=500)
     p.add_argument("--eval-batches", type=int, default=50)
@@ -112,7 +113,7 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
 
     if args.resume:
         ckpt = load_checkpoint(ckpt_path, map_location=device)
-        cfg = Config(**ckpt["config"])
+        cfg = Config.from_checkpoint(ckpt["config"])
         cfg.max_steps = args.max_steps
     else:
         ckpt = None
@@ -124,6 +125,7 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
             max_steps=args.max_steps,
             warmup_steps=args.warmup_steps,
             dropout=args.dropout,
+            pos_encoding=args.pos_encoding,
             tokenizer_path=args.tokenizer,
             data_processed_dir=args.processed_dir,
         )

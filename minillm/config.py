@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -16,6 +17,7 @@ class Config:
     vocab_size: int = 8000
     max_seq_len: int = 256
     dropout: float = 0.1
+    pos_encoding: str = "rope"  # "rope" or "learned" (v1)
 
     # Training (used from phase 3; kept here so sizes live in one place)
     batch_size: int = 8
@@ -40,6 +42,13 @@ class Config:
         self.checkpoint_dir = Path(self.checkpoint_dir)
         if self.d_model % self.n_heads != 0:
             raise ValueError("d_model must be divisible by n_heads")
+        if self.pos_encoding not in ("rope", "learned"):
+            raise ValueError(f"unknown pos_encoding {self.pos_encoding!r}")
+
+    @classmethod
+    def from_checkpoint(cls, saved: dict[str, Any]) -> Config:
+        """Rebuild a saved config; checkpoints from before pos_encoding existed used learned positions."""
+        return cls(**{"pos_encoding": "learned", **saved})
 
 
 def default_config() -> Config:

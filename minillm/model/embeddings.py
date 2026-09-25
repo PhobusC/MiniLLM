@@ -1,4 +1,4 @@
-"""Token and learned positional embeddings."""
+"""Token embeddings, plus learned positional embeddings unless RoPE handles positions."""
 
 from __future__ import annotations
 
@@ -7,11 +7,13 @@ from torch import nn
 
 
 class TokenPositionalEmbedding(nn.Module):
-    def __init__(self, vocab_size: int, d_model: int, max_seq_len: int, dropout: float) -> None:
+    def __init__(
+        self, vocab_size: int, d_model: int, max_seq_len: int, dropout: float, learned_positions: bool = True
+    ) -> None:
         super().__init__()
         self.max_seq_len = max_seq_len
         self.tok = nn.Embedding(vocab_size, d_model)
-        self.pos = nn.Embedding(max_seq_len, d_model)
+        self.pos = nn.Embedding(max_seq_len, d_model) if learned_positions else None
         self.drop = nn.Dropout(dropout)
 
     def forward(self, input_ids: torch.Tensor, position_ids: torch.Tensor | None = None) -> torch.Tensor:
@@ -23,4 +25,7 @@ class TokenPositionalEmbedding(nn.Module):
             position_ids = torch.arange(T, device=input_ids.device)
         elif int(position_ids.max()) >= self.max_seq_len:
             raise ValueError(f"position {int(position_ids.max())} exceeds max_seq_len {self.max_seq_len}")
-        return self.drop(self.tok(input_ids) + self.pos(position_ids))
+        x = self.tok(input_ids)
+        if self.pos is not None:
+            x = x + self.pos(position_ids)
+        return self.drop(x)

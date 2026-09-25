@@ -48,7 +48,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def load_model(ckpt: Path, device: torch.device) -> tuple[MiniGPT, MiniTokenizer]:
     path = ckpt / "ckpt.pt" if ckpt.is_dir() else ckpt
     payload = load_checkpoint(path, map_location=device)
-    cfg = Config(**payload["config"])
+    cfg = Config.from_checkpoint(payload["config"])
     model = MiniGPT(cfg).to(device)
     model.load_state_dict(payload["model"])
     model.eval()

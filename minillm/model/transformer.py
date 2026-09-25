@@ -15,9 +15,12 @@ class MiniGPT(nn.Module):
     def __init__(self, cfg: Config, tie_weights: bool = True) -> None:
         super().__init__()
         self.cfg = cfg
-        self.embed = TokenPositionalEmbedding(cfg.vocab_size, cfg.d_model, cfg.max_seq_len, cfg.dropout)
+        rope = cfg.pos_encoding == "rope"
+        self.embed = TokenPositionalEmbedding(
+            cfg.vocab_size, cfg.d_model, cfg.max_seq_len, cfg.dropout, learned_positions=not rope
+        )
         self.blocks = nn.ModuleList(
-            TransformerBlock(cfg.d_model, cfg.n_heads, cfg.d_ff, cfg.max_seq_len, cfg.dropout)
+            TransformerBlock(cfg.d_model, cfg.n_heads, cfg.d_ff, cfg.max_seq_len, cfg.dropout, rope=rope)
             for _ in range(cfg.n_layers)
         )
         self.ln_f = nn.LayerNorm(cfg.d_model)
@@ -63,7 +66,7 @@ class MiniGPT(nn.Module):
         """
         T = input_ids.size(1)
         past_len = kv_cache[0][0].size(2) if kv_cache else 0
-        if position_ids is None and past_len:
+        if position_ids is None:
             position_ids = torch.arange(past_len, past_len + T, device=input_ids.device)[None]
         mask = None
         if attention_mask is not None or (past_len and T > 1):
@@ -73,7 +76,7 @@ class MiniGPT(nn.Module):
         presents: list[KVCache] = []
         for i, block in enumerate(self.blocks):
             past = kv_cache[i] if kv_cache else None
-            x = block(x, attn_mask=mask, past_kv=past, use_cache=use_cache)
+            x = block(x, attn_mask=mask, past_kv=past, use_cache=use_cache, position_ids=position_ids)
             if use_cache:
                 x, present = x
                 presents.append(present)
