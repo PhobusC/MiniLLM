@@ -207,7 +207,7 @@ Goal: learn from larger, richer text (Project Gutenberg), use a modern position 
 - [x] Stage 4: RoPE code (comparison run in progress)
 - [x] Stage 5: Gutenberg pipeline code (download in progress)
 - [ ] Stage 6: Scale to ~13.6M and train v2
-- [ ] Stage 7: Local chat page
+- [x] Stage 7: Local chat page
 
 ## Later (v3 ideas)
 
