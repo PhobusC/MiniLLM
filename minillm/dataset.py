@@ -106,9 +106,14 @@ def make_dataloader(
 DOC_SEPARATOR = "<|endoftext|>"
 
 
-def _iter_documents(path: Path, docs_per_batch: int) -> Iterator[list[str]]:
-    """Yield batches of documents split on DOC_SEPARATOR, streaming the file line by line."""
+def _iter_documents(path: Path, docs_per_batch: int, max_batch_chars: int = 50_000_000) -> Iterator[list[str]]:
+    """Yield batches of documents split on DOC_SEPARATOR, streaming the file line by line.
+
+    A batch ends at docs_per_batch documents or max_batch_chars characters, so book-length documents
+    don't pile up in memory.
+    """
     batch: list[str] = []
+    batch_chars = 0
     lines: list[str] = []
     with path.open(encoding="utf-8") as f:
         for line in f:
@@ -117,9 +122,11 @@ def _iter_documents(path: Path, docs_per_batch: int) -> Iterator[list[str]]:
                 lines = []
                 if doc:
                     batch.append(doc)
-                if len(batch) >= docs_per_batch:
+                    batch_chars += len(doc)
+                if len(batch) >= docs_per_batch or batch_chars >= max_batch_chars:
                     yield batch
                     batch = []
+                    batch_chars = 0
             else:
                 lines.append(line)
     doc = "".join(lines).strip()
