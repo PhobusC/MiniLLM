@@ -14,10 +14,13 @@ class TokenPositionalEmbedding(nn.Module):
         self.pos = nn.Embedding(max_seq_len, d_model)
         self.drop = nn.Dropout(dropout)
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """(B, T) int64 -> (B, T, C)."""
-        T = input_ids.size(1)
-        if T > self.max_seq_len:
-            raise ValueError(f"sequence length {T} exceeds max_seq_len {self.max_seq_len}")
-        positions = torch.arange(T, device=input_ids.device)
-        return self.drop(self.tok(input_ids) + self.pos(positions))
+    def forward(self, input_ids: torch.Tensor, position_ids: torch.Tensor | None = None) -> torch.Tensor:
+        """(B, T) int64 -> (B, T, C). position_ids defaults to 0..T-1."""
+        if position_ids is None:
+            T = input_ids.size(1)
+            if T > self.max_seq_len:
+                raise ValueError(f"sequence length {T} exceeds max_seq_len {self.max_seq_len}")
+            position_ids = torch.arange(T, device=input_ids.device)
+        elif int(position_ids.max()) >= self.max_seq_len:
+            raise ValueError(f"position {int(position_ids.max())} exceeds max_seq_len {self.max_seq_len}")
+        return self.drop(self.tok(input_ids) + self.pos(position_ids))

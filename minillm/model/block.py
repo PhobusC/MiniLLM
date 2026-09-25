@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from minillm.model.attention import CausalSelfAttention
+from minillm.model.attention import CausalSelfAttention, KVCache
 
 
 class FeedForward(nn.Module):
@@ -30,6 +30,17 @@ class TransformerBlock(nn.Module):
         self.ln2 = nn.LayerNorm(d_model)
         self.ff = FeedForward(d_model, d_ff, dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.attn(self.ln1(x))
-        return x + self.ff(self.ln2(x))
+    def forward(
+        self,
+        x: torch.Tensor,
+        attn_mask: torch.Tensor | None = None,
+        past_kv: KVCache | None = None,
+        use_cache: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, KVCache]:
+        attn_out = self.attn(self.ln1(x), attn_mask=attn_mask, past_kv=past_kv, use_cache=use_cache)
+        present = None
+        if use_cache:
+            attn_out, present = attn_out
+        x = x + attn_out
+        x = x + self.ff(self.ln2(x))
+        return (x, present) if use_cache else x
