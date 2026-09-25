@@ -41,3 +41,9 @@ class MiniGPT(nn.Module):
 
     def num_params(self) -> int:
         return sum(p.numel() for p in self.parameters())
+
+    def param_report(self, target: tuple[int, int] = (5_000_000, 20_000_000)) -> str:
+        n = self.num_params()
+        lo, hi = target
+        status = "within" if lo <= n <= hi else "OUTSIDE"
+        return f"params={n:,} ({n / 1e6:.2f}M, {status} target {lo / 1e6:.0f}-{hi / 1e6:.0f}M)"

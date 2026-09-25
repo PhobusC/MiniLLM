@@ -4,6 +4,9 @@ Usage:
     python generate.py --ckpt checkpoints/v1 --prompt "Once upon a time"
     python generate.py --ckpt checkpoints/v1 --prompt "Tom saw a dog" --greedy
     python generate.py --ckpt checkpoints/v1 --prompt "Lily" --temperature 0.8 --top-k 40 --num-samples 3
+    python generate.py --ckpt checkpoints/v1 --prompt "Once upon a time" --compare   # greedy vs sampled
+
+Greedy decoding tends to loop on small models; sampling (temperature ~0.8, top-k ~50) is usually more varied.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--top-k", type=int, default=50, help="0 disables top-k filtering")
     p.add_argument("--greedy", action="store_true", help="always pick the most likely token")
     p.add_argument("--num-samples", type=int, default=1)
+    p.add_argument("--compare", action="store_true", help="print one greedy output, then --num-samples sampled outputs")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--device", type=str, default=None)
     return p.parse_args(argv)
@@ -79,16 +83,22 @@ def main(argv: list[str] | None = None) -> list[str]:
     device = torch.device(args.device) if args.device else get_device()
     model, tok = load_model(args.ckpt, device)
     prompt_ids = [tok.bos_id] + tok.encode(args.prompt)
+    print(model.param_report())
+
+    runs = [("greedy", True)] if args.compare or args.greedy else []
+    if not args.greedy or args.compare:
+        label = f"sampled (T={args.temperature}, top-k={args.top_k})"
+        runs += [(f"{label} #{i + 1}", False) for i in range(args.num_samples)]
 
     outputs = []
-    for i in range(args.num_samples):
+    for label, greedy in runs:
         ids = generate(
             model, prompt_ids, args.max_new_tokens,
-            temperature=args.temperature, top_k=args.top_k, greedy=args.greedy, eos_id=tok.eos_id,
+            temperature=args.temperature, top_k=args.top_k, greedy=greedy, eos_id=tok.eos_id,
         )
         text = tok.decode(ids)
         outputs.append(text)
-        print(f"--- sample {i + 1} ---\n{text}\n")
+        print(f"--- {label} ---\n{text}\n")
     return outputs
 
 

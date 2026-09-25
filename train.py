@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
         optimizer.load_state_dict(ckpt["optimizer"])
         start_step = ckpt["step"]
 
-    print(f"device={device} params={model.num_params():,} train_windows={len(train_ds):,} start_step={start_step}")
+    print(f"device={device} {model.param_report()} train_windows={len(train_ds):,} start_step={start_step}")
 
     def save(step: int) -> None:
         save_checkpoint(
@@ -198,7 +198,7 @@ def main(argv: list[str] | None = None) -> dict[str, float]:
     finally:
         log_file.close()
 
-    print(f"saved checkpoint to {ckpt_path}")
+    print(f"saved checkpoint to {ckpt_path}; loss curve in {log_path}")
     return last
 
 
