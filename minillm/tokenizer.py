@@ -82,6 +82,8 @@ class MiniTokenizer:
             vocab_size=vocab_size,
             special_tokens=SPECIAL_TOKENS,
             min_frequency=min_frequency,
+            # Every byte gets a token, so characters missing from the training text still round-trip.
+            initial_alphabet=ByteLevel.alphabet(),
         )
         tokenizer.train(paths, trainer)
         wrapped = cls(tokenizer)
